@@ -64,7 +64,11 @@ function createApiClient(sessionKey, orgId) {
     try {
       res = await fetch(url, {
         headers: {
+          'Accept': 'application/json',
           'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+          'Referer': 'https://claude.ai/',
+          'Origin': 'https://claude.ai',
           'Cookie': sessionKey
         }
       });
@@ -396,7 +400,11 @@ async function discoverOrgId(sessionKey) {
   try {
     const res = await fetch(`${BASE_URL}/api/auth/session`, {
       headers: {
+        'Accept': 'application/json',
         'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+        'Referer': 'https://claude.ai/',
+        'Origin': 'https://claude.ai',
         'Cookie': sessionKey
       }
     });
