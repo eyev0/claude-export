@@ -244,7 +244,7 @@ async function exportProject(api, project, outputDir, manifest, force) {
 
   if (!force && !shouldSyncProject(manifest, projectId, updatedAt)) {
     console.log(`  [skip] Project "${project.name}" (unchanged)`);
-    return projectDir;
+    return { dir: projectDir, status: 'skipped' };
   }
 
   console.log(`  [sync] Project: ${project.name}`);
@@ -278,7 +278,10 @@ async function exportProject(api, project, outputDir, manifest, force) {
         const content = doc.content || '';
 
         if (content) {
-          fs.writeFileSync(path.join(docsDir, sanitizeFilename(filename)), content);
+          const ext = path.extname(filename);
+          const base = path.basename(filename, ext);
+          const safeFilename = sanitizeFilename(base) + ext.toLowerCase();
+          fs.writeFileSync(path.join(docsDir, safeFilename), content);
           console.log(`         Saved doc: ${filename}`);
         }
       }
@@ -292,7 +295,7 @@ async function exportProject(api, project, outputDir, manifest, force) {
     updatedAt
   });
 
-  return projectDir;
+  return { dir: projectDir, status: 'synced' };
 }
 
 async function exportConversation(api, convSummary, targetDir, outputDir, manifest, force) {
@@ -305,7 +308,7 @@ async function exportConversation(api, convSummary, targetDir, outputDir, manife
 
   const title = convSummary.name || 'untitled';
   const sanitizedTitle = sanitizeFilename(title);
-  const filename = sanitizedTitle + '.md';
+  const filename = sanitizedTitle + '_' + convId.substring(0, 8) + '.md';
   const filePath = path.join(targetDir, filename);
 
   try {
@@ -475,7 +478,7 @@ async function main() {
   const manifest = readManifest(outputDir);
   manifest.orgId = orgId;
 
-  const stats = { projects: 0, conversations: 0, skipped: 0, errors: 0 };
+  const stats = { projects: 0, projectsSkipped: 0, conversations: 0, skipped: 0, errors: 0 };
 
   // ── Phase 1: Export Projects ────────────────────────────────────────────
 
@@ -503,10 +506,14 @@ async function main() {
     }
 
     try {
-      const dir = await exportProject(api, project, outputDir, manifest, flags.force);
-      projectDirs[project.uuid] = dir;
-      stats.projects++;
-      writeManifest(outputDir, manifest);
+      const result = await exportProject(api, project, outputDir, manifest, flags.force);
+      projectDirs[project.uuid] = result.dir;
+      if (result.status === 'synced') {
+        stats.projects++;
+        writeManifest(outputDir, manifest);
+      } else {
+        stats.projectsSkipped++;
+      }
     } catch (err) {
       console.error(`  [ERROR] Project "${project.name}": ${err.message}`);
       stats.errors++;
@@ -521,6 +528,9 @@ async function main() {
     const data = await api.listConversations();
     conversations = Array.isArray(data) ? data : [];
     console.log(`Found ${conversations.length} conversation(s)\n`);
+    if (conversations.length > 0 && conversations.length % 50 === 0) {
+      console.warn(`Warning: Got exactly ${conversations.length} conversations -- the API may be paginating. Some conversations could be missing.`);
+    }
   } catch (err) {
     console.error(`Failed to fetch conversations: ${err.message}\n`);
   }
@@ -567,7 +577,7 @@ async function main() {
   console.log('='.repeat(52));
   console.log('  Sync complete');
   console.log('='.repeat(52));
-  console.log(`  Projects synced:        ${stats.projects}`);
+  console.log(`  Projects synced:        ${stats.projects}${stats.projectsSkipped ? `, ${stats.projectsSkipped} skipped` : ''}`);
   console.log(`  Conversations exported: ${stats.conversations}`);
   console.log(`  Conversations skipped:  ${stats.skipped} (unchanged)`);
   if (stats.errors > 0) {
