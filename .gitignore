@@ -3,3 +3,5 @@ archive/
 api-probe.js
 api-probe-output.json
 node_modules/
+
+docs/
