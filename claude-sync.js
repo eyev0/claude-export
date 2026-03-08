@@ -27,9 +27,28 @@ function loadEnv() {
   }
 }
 
-function prompt(question) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-  return new Promise(resolve => rl.question(question, answer => { rl.close(); resolve(answer); }));
+function readStdin(question) {
+  process.stderr.write(question);
+  return new Promise(resolve => {
+    const chunks = [];
+    process.stdin.setEncoding('utf-8');
+    process.stdin.on('data', chunk => chunks.push(chunk));
+    process.stdin.on('end', () => resolve(chunks.join('')));
+    process.stdin.resume();
+  });
+}
+
+function parseCookieFromCurl(input) {
+  // Collapse line continuations and normalize
+  const flat = input.replace(/\\\r?\n\s*/g, ' ');
+  // Try -b 'cookies' or -b "cookies"
+  const bMatch = flat.match(/-b\s+'([^']+)'/) || flat.match(/-b\s+"([^"]+)"/);
+  if (bMatch) return bMatch[1];
+  // Try -H 'Cookie: ...' or -H "Cookie: ..."
+  const hMatch = flat.match(/['-]H\s+['"]Cookie:\s*([^'"]+)['"]/i);
+  if (hMatch) return hMatch[1].trim();
+  // Assume raw cookie string
+  return flat.trim();
 }
 
 loadEnv();
@@ -475,20 +494,17 @@ async function main() {
     console.log('No session cookie found.\n');
     console.log('How to get it:');
     console.log('  1. Open https://claude.ai -> DevTools (F12) -> Network tab');
-    console.log('  2. Click any API request -> right-click -> "Copy as cURL"');
-    console.log('  3. Paste below (or just the Cookie header value)\n');
+    console.log('  2. Right-click any request -> "Copy as cURL"');
+    console.log('  3. Pipe it in:\n');
+    console.log('     pbpaste | node claude-sync.js ./archive\n');
 
-    const input = await prompt('Paste cookie or cURL: ');
-    // Extract cookie from cURL -b/-H flags, or use raw input
-    const curlCookieMatch = input.match(/-b\s+'([^']+)'/) || input.match(/-b\s+"([^"]+)"/);
-    const headerCookieMatch = input.match(/Cookie:\s*([^\n'"]+)/i);
-    sessionKey = curlCookieMatch?.[1] || headerCookieMatch?.[1]?.trim() || input.trim();
+    const input = await readStdin('Or paste cookie/cURL here, then press Ctrl+D:\n');
+    sessionKey = parseCookieFromCurl(input);
 
     if (sessionKey) {
-      // Save to .env for next run
       const envPath = path.join(__dirname, '.env');
       fs.writeFileSync(envPath, `export CLAUDE_SESSION_KEY="${sessionKey}"\n`);
-      console.log('Saved to .env for future runs.\n');
+      console.log('\nSaved to .env for future runs.\n');
     }
   }
 
