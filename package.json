@@ -9,6 +9,7 @@
     "sync": "node claude-sync.js ./archive",
     "sync:force": "node claude-sync.js ./archive --force"
   },
+  "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
   }
