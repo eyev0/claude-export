@@ -27,13 +27,14 @@ function loadEnv() {
   }
 }
 
-function readStdin(question) {
-  process.stderr.write(question);
-  return new Promise(resolve => {
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    if (process.stdin.isTTY) { resolve(null); return; }
     const chunks = [];
     process.stdin.setEncoding('utf-8');
     process.stdin.on('data', chunk => chunks.push(chunk));
     process.stdin.on('end', () => resolve(chunks.join('')));
+    process.stdin.on('error', reject);
     process.stdin.resume();
   });
 }
@@ -488,28 +489,43 @@ async function main() {
     process.exit(flags.help ? 0 : 1);
   }
 
-  // Validate session key — prompt interactively if missing
+  // Validate session key — check .env, stdin pipe, or bail with instructions
   let sessionKey = process.env.CLAUDE_SESSION_KEY;
+
   if (!sessionKey) {
-    console.log('No session cookie found.\n');
-    console.log('How to get it:');
-    console.log('  1. Open https://claude.ai -> DevTools (F12) -> Network tab');
-    console.log('  2. Right-click any request -> "Copy as cURL"');
-    console.log('  3. Pipe it in:\n');
-    console.log('     pbpaste | node claude-sync.js ./archive\n');
-
-    const input = await readStdin('Or paste cookie/cURL here, then press Ctrl+D:\n');
-    sessionKey = parseCookieFromCurl(input);
-
-    if (sessionKey) {
-      const envPath = path.join(__dirname, '.env');
-      fs.writeFileSync(envPath, `export CLAUDE_SESSION_KEY="${sessionKey}"\n`);
-      console.log('\nSaved to .env for future runs.\n');
+    // Try reading .cookie file (pbpaste > .cookie)
+    const cookiePath = path.join(__dirname, '.cookie');
+    if (fs.existsSync(cookiePath)) {
+      const raw = fs.readFileSync(cookiePath, 'utf-8');
+      sessionKey = parseCookieFromCurl(raw);
+      if (sessionKey) {
+        const envPath = path.join(__dirname, '.env');
+        fs.writeFileSync(envPath, `export CLAUDE_SESSION_KEY="${sessionKey}"\n`);
+        fs.unlinkSync(cookiePath);
+        console.log('Cookie loaded from .cookie and saved to .env\n');
+      }
     }
   }
 
   if (!sessionKey) {
-    console.error('Error: No session cookie provided.');
+    // Try reading from piped stdin (pbpaste | node claude-sync.js ./archive)
+    const piped = await readStdin();
+    if (piped) {
+      sessionKey = parseCookieFromCurl(piped);
+      if (sessionKey) {
+        const envPath = path.join(__dirname, '.env');
+        fs.writeFileSync(envPath, `export CLAUDE_SESSION_KEY="${sessionKey}"\n`);
+        console.log('Cookie saved to .env for future runs.\n');
+      }
+    }
+  }
+
+  if (!sessionKey) {
+    console.error('No session cookie found.\n');
+    console.error('Copy a cURL from claude.ai DevTools, then:');
+    console.error('  pbpaste | node claude-sync.js ./archive\n');
+    console.error('Or save it manually:');
+    console.error('  pbpaste > .cookie && node claude-sync.js ./archive');
     process.exit(1);
   }
 

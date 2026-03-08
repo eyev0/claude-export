@@ -1,4 +1,5 @@
 .env
+.cookie
 archive/
 api-probe.js
 api-probe-output.json
