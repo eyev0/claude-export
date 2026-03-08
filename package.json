@@ -1,1 +1,15 @@
-{}
+{
+  "name": "claude-export",
+  "version": "1.0.0",
+  "description": "Incrementally sync Claude.ai conversations to local markdown",
+  "bin": {
+    "claude-sync": "./claude-sync.js"
+  },
+  "scripts": {
+    "sync": "node claude-sync.js ./archive",
+    "sync:force": "node claude-sync.js ./archive --force"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

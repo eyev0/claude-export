@@ -5,6 +5,34 @@
 
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
+
+// ─── .env loader ────────────────────────────────────────────────────────────
+
+function loadEnv() {
+  const envPath = path.join(__dirname, '.env');
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
+    const trimmed = line.replace(/^export\s+/, '').trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq);
+    let val = trimmed.slice(eq + 1);
+    // Strip surrounding quotes
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!process.env[key]) process.env[key] = val;
+  }
+}
+
+function prompt(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  return new Promise(resolve => rl.question(question, answer => { rl.close(); resolve(answer); }));
+}
+
+loadEnv();
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -441,23 +469,37 @@ async function main() {
     process.exit(flags.help ? 0 : 1);
   }
 
-  // Validate session key
-  const sessionKey = process.env.CLAUDE_SESSION_KEY;
+  // Validate session key — prompt interactively if missing
+  let sessionKey = process.env.CLAUDE_SESSION_KEY;
   if (!sessionKey) {
-    console.error('Error: CLAUDE_SESSION_KEY environment variable is not set.');
-    console.error('');
-    console.error('How to get your session cookie:');
-    console.error('  1. Open https://claude.ai in your browser');
-    console.error('  2. Open DevTools (F12) -> Application -> Cookies -> claude.ai');
-    console.error('  3. Copy the "sessionKey" value (starts with sk-ant-)');
-    console.error('  4. Export it:');
-    console.error('     export CLAUDE_SESSION_KEY="sessionKey=sk-ant-...; lastActiveOrg=..."');
+    console.log('No session cookie found.\n');
+    console.log('How to get it:');
+    console.log('  1. Open https://claude.ai -> DevTools (F12) -> Network tab');
+    console.log('  2. Click any API request -> right-click -> "Copy as cURL"');
+    console.log('  3. Paste below (or just the Cookie header value)\n');
+
+    const input = await prompt('Paste cookie or cURL: ');
+    // Extract cookie from cURL -b/-H flags, or use raw input
+    const curlCookieMatch = input.match(/-b\s+'([^']+)'/) || input.match(/-b\s+"([^"]+)"/);
+    const headerCookieMatch = input.match(/Cookie:\s*([^\n'"]+)/i);
+    sessionKey = curlCookieMatch?.[1] || headerCookieMatch?.[1]?.trim() || input.trim();
+
+    if (sessionKey) {
+      // Save to .env for next run
+      const envPath = path.join(__dirname, '.env');
+      fs.writeFileSync(envPath, `export CLAUDE_SESSION_KEY="${sessionKey}"\n`);
+      console.log('Saved to .env for future runs.\n');
+    }
+  }
+
+  if (!sessionKey) {
+    console.error('Error: No session cookie provided.');
     process.exit(1);
   }
 
   if (!sessionKey.includes('sessionKey=')) {
-    console.warn('Warning: CLAUDE_SESSION_KEY does not appear to contain "sessionKey=...".');
-    console.warn('Make sure you copied the full cookie value.');
+    console.warn('Warning: Input does not appear to contain "sessionKey=...".');
+    console.warn('Make sure you copied the full cookie string.\n');
   }
 
   // Resolve org ID
