@@ -6,3 +6,5 @@ api-probe-output.json
 node_modules/
 
 docs/
+
+*.zip
