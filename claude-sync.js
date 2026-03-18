@@ -395,13 +395,15 @@ async function exportConversation(api, convSummary, targetDir, outputDir, manife
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const flags = { force: false, project: null, outputDir: null };
+  const flags = { force: false, project: null, pick: false, outputDir: null };
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--force' || args[i] === '-f') {
       flags.force = true;
     } else if ((args[i] === '--project' || args[i] === '-p') && args[i + 1]) {
       flags.project = args[++i];
+    } else if (args[i] === '--pick') {
+      flags.pick = true;
     } else if (args[i] === '--help' || args[i] === '-h') {
       flags.help = true;
     } else if (!args[i].startsWith('-')) {
@@ -422,6 +424,7 @@ Usage:
 Options:
   --force, -f            Re-download all conversations (ignore manifest)
   --project, -p "name"   Only sync a specific project (by name)
+  --pick                 Interactively pick conversations to export
   --help, -h             Show this help message
 
 Environment:
@@ -435,6 +438,7 @@ Examples:
   node claude-sync.js ./archive             # sync all
   node claude-sync.js ./archive --force     # re-download everything
   node claude-sync.js ./archive -p "My Project"  # sync one project only
+  node claude-sync.js ./archive --pick           # pick specific conversations
 `);
 }
 
@@ -479,6 +483,66 @@ async function discoverOrgId(sessionKey) {
     console.error(`Failed to discover org ID: ${err.message}`);
     return null;
   }
+}
+
+function askQuestion(query) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(query, answer => { rl.close(); resolve(answer); }));
+}
+
+async function pickItems(projects, conversations) {
+  const items = [];
+
+  if (projects.length > 0) {
+    console.log('\n  #  | Тип     | Дата        | Название');
+    console.log('─'.repeat(75));
+
+    for (const p of projects) {
+      const date = p.updated_at
+        ? new Date(p.updated_at).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        : '          ';
+      items.push({ type: 'project', data: p, label: p.name || 'Unnamed', date });
+    }
+  } else {
+    console.log('\n  #  | Тип  | Дата        | Название');
+    console.log('─'.repeat(75));
+  }
+
+  for (const c of conversations) {
+    const date = c.updated_at
+      ? new Date(c.updated_at).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      : '          ';
+    items.push({ type: 'chat', data: c, label: c.name || 'Untitled', date });
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const num = String(i + 1).padStart(3);
+    const tag = it.type === 'project' ? 'проект' : 'чат   ';
+    const title = it.label.substring(0, 43);
+    console.log(`${num}  | ${tag} | ${it.date}  | ${title}`);
+  }
+
+  console.log('─'.repeat(75));
+  const answer = await askQuestion('\nВведите номера через запятую (например: 3,17): ');
+
+  const indices = answer
+    .split(/[,\s]+/)
+    .map(s => parseInt(s.trim(), 10) - 1)
+    .filter(n => n >= 0 && n < items.length);
+
+  if (indices.length === 0) {
+    console.log('Ничего не выбрано.');
+    return { pickedProjects: [], pickedConversations: [] };
+  }
+
+  const picked = indices.map(i => items[i]);
+  console.log(`\nВыбрано: ${picked.map(it => it.label).join(', ')}\n`);
+
+  return {
+    pickedProjects: picked.filter(it => it.type === 'project').map(it => it.data),
+    pickedConversations: picked.filter(it => it.type === 'chat').map(it => it.data),
+  };
 }
 
 async function main() {
@@ -562,19 +626,48 @@ async function main() {
 
   const stats = { projects: 0, projectsSkipped: 0, conversations: 0, skipped: 0, errors: 0 };
 
-  // ── Phase 1: Export Projects ────────────────────────────────────────────
+  // ── Fetch lists (lightweight metadata only) ─────────────────────────────
 
   console.log('Fetching projects...');
   let projects = [];
   try {
     const data = await api.listProjects();
     projects = Array.isArray(data) ? data : [];
-    console.log(`Found ${projects.length} project(s)\n`);
+    console.log(`Found ${projects.length} project(s)`);
   } catch (err) {
-    console.error(`Failed to fetch projects: ${err.message}\n`);
+    console.error(`Failed to fetch projects: ${err.message}`);
   }
 
-  // Map project UUID -> output directory
+  console.log('Fetching conversations...');
+  let conversations = [];
+  try {
+    const data = await api.listConversations();
+    conversations = Array.isArray(data) ? data : [];
+    console.log(`Found ${conversations.length} conversation(s)`);
+    if (conversations.length > 0 && conversations.length % 50 === 0) {
+      console.warn(`Warning: Got exactly ${conversations.length} conversations -- the API may be paginating. Some conversations could be missing.`);
+    }
+  } catch (err) {
+    console.error(`Failed to fetch conversations: ${err.message}`);
+  }
+
+  // ── Interactive pick mode ──────────────────────────────────────────────
+
+  if (flags.pick) {
+    if (projects.length === 0 && conversations.length === 0) {
+      console.log('\nНичего не найдено.');
+      process.exit(0);
+    }
+    const picked = await pickItems(projects, conversations);
+    projects = picked.pickedProjects;
+    conversations = picked.pickedConversations;
+    if (projects.length === 0 && conversations.length === 0) {
+      process.exit(0);
+    }
+  }
+
+  // ── Phase 1: Export Projects ───────────────────────────────────────────
+
   const projectDirs = {};
 
   for (const project of projects) {
@@ -602,20 +695,7 @@ async function main() {
     }
   }
 
-  // ── Phase 2: Export Conversations ───────────────────────────────────────
-
-  console.log('\nFetching conversations...');
-  let conversations = [];
-  try {
-    const data = await api.listConversations();
-    conversations = Array.isArray(data) ? data : [];
-    console.log(`Found ${conversations.length} conversation(s)\n`);
-    if (conversations.length > 0 && conversations.length % 50 === 0) {
-      console.warn(`Warning: Got exactly ${conversations.length} conversations -- the API may be paginating. Some conversations could be missing.`);
-    }
-  } catch (err) {
-    console.error(`Failed to fetch conversations: ${err.message}\n`);
-  }
+  // ── Phase 2: Export Conversations ──────────────────────────────────────
 
   for (const conv of conversations) {
     const projectId = conv.project_uuid || null;

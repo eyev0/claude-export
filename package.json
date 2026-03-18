@@ -7,7 +7,9 @@
   },
   "scripts": {
     "sync": "node claude-sync.js ./archive",
-    "sync:force": "node claude-sync.js ./archive --force"
+    "sync:force": "node claude-sync.js ./archive --force",
+    "sync:pick": "node claude-sync.js ./archive --pick",
+    "sync:pick-force": "node claude-sync.js ./archive --pick --force"
   },
   "license": "MIT",
   "engines": {
